@@ -1,0 +1,363 @@
+#include <stdio.h>
+#include <netinet/in.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <errno.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <stdbool.h>
+
+//#define PORT 8080
+
+int set_game_port2(int *two_players[], int i, bool *ports[]) {
+    if (two_players[0] == 0) {
+        two_players[0] = i;
+        return 0;
+    } else {
+        printf(" a player already here: %d \n", two_players[0]);
+        two_players[1] = i;
+        for (int j = 0; j < sizeof(ports) / sizeof(bool); j++) {
+            if (ports[j]) {
+                ports[j] = false;
+                return j + 3960;
+            }
+        }
+    }
+}
+
+int set_game_port3(int *three_players[], int i, bool *ports[]) {
+    if (three_players[0] == 0) {
+        three_players[0] = i;
+        return 0;
+    }
+    if (three_players[1] == 0) {
+        three_players[1] = i;
+        return 0;
+    } else {
+        three_players[2] = i;
+        for (int j = 0; j < sizeof(ports) / sizeof(bool); j++) {
+            if (ports[j]) {
+                ports[j] = false;
+                return j + 3960;
+            }
+        }
+    }
+}
+
+int set_game_port4(int *four_players[], int i, bool *ports[]) {
+    if (four_players[0] == 0) {
+        four_players[0] = i;
+        return 0;
+    }
+    if (four_players[1] == 0) {
+        four_players[1] = i;
+        return 0;
+    }
+    if (four_players[2] == 0) {
+        four_players[2] = i;
+        return 0;
+    } else {
+        four_players[3] = i;
+        for (int j = 0; j < sizeof(ports) / sizeof(bool); j++) {
+            if (ports[j]) {
+                ports[j] = false;
+                return j + 3960;
+            }
+        }
+    }
+}
+
+int main( int argc, char *argv[] ) {
+
+    printf("Hello, World!\n");
+
+    int PORT = atoi(argv[1]);
+    int client_num = 20;
+    int *clients;
+    clients = (int *) malloc(client_num * sizeof(int));
+
+    for (int i = 0; i < client_num; i++) {
+        clients[i] = 0;
+    }
+
+    bool *ports[40];
+    for (int i = 0; i < 40; i++) {
+        ports[i] = true;
+    }
+    int *two_players[2], *three_players[3], *four_players[4];
+    for (int i = 0; i < 4; i++) {
+        four_players[i] = 0;
+        if (i < 3) {
+            three_players[i] = 0;
+        }
+        if (i < 2) {
+            two_players[i] = 0;
+        }
+    }
+
+    char *message = "SERVER SPEAKING: Hello, Welcome to the BoxDots game.\n ";
+    int count;
+    char buffer[1025];
+
+    //SOCKET CREATION
+    int main_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (main_sock == -1) {
+        printf("Main_socket creation failed...\n");
+        exit(0);
+    } else
+        printf("Main_socket successfully created. Main socket descriptor is: %d\n", main_sock);
+
+    struct sockaddr_in client_addr;
+    int len = sizeof(client_addr);
+    struct sockaddr_in server_addr;
+    bzero(&server_addr, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    server_addr.sin_port = htons(PORT);
+
+    //SOCKET BINDING TO PORT AND IP
+    int bind_int = bind(main_sock, &server_addr, sizeof(server_addr));
+    if (bind_int != 0) {
+        printf("Main socket bind failed...\n");
+        exit(0);
+    } else
+        printf("Main socket successfully binded...\n");
+
+    //MAIN SOKET LISTENING
+    int listen_int = listen(main_sock, 50);
+    if (listen_int != 0) {
+        printf("Listen failed...\n");
+        exit(0);
+    } else
+        printf("Server listening..\n");
+
+    //SELECT
+    fd_set passedfds, mainfds; //LIST OF SOCKETS PASSED TO SELECT()
+    int max_sd, sd, new_sock;
+    max_sd = main_sock;
+
+
+    FD_SET(main_sock, &mainfds);
+
+    while (1) {
+        FD_ZERO(&passedfds);
+        passedfds = mainfds;
+
+        int activity = select(max_sd + 1, &passedfds, NULL, NULL, NULL);
+
+        if ((activity < 0) && (errno != EINTR)) {
+            perror("select error");
+        }
+
+        //CHECK FOR ACTIVITIES IN THE MAIN SOCKET: ANY CONNECTION REQUESTS?
+        if (FD_ISSET(main_sock, &passedfds)) {
+            printf("A client wants to connect;\n");
+            if ((new_sock = accept(main_sock,
+                                   (struct sockaddr *) &client_addr, (socklen_t *) &len)) < 0) {
+                perror("accept error\n");
+                exit(EXIT_FAILURE);
+            }
+
+            printf("New connection , socket fd is %d , ip is : %s , port : %d\n", new_sock,
+                   inet_ntoa(client_addr.sin_addr), ntohs
+                           (client_addr.sin_port));
+
+            //send new connection greeting message
+            if (send(new_sock, message, strlen(message), 0) != strlen(message)) {
+                perror("ERROR IN SEND");
+            } else
+                printf("Greeting sent!\n");
+
+            FD_SET(new_sock, &mainfds);
+            if (new_sock > max_sd) {
+                max_sd = new_sock;
+            }
+        }
+        //else its some IO operation on some other socket
+        for (int i = 0; i < max_sd + 1; i++) {
+            if (FD_ISSET(i, &passedfds) && i != main_sock) {
+                //Check if it was for closing , and also read the
+                //incoming message
+                bzero(buffer, strlen(buffer));
+
+                int count = recv(i, buffer, 1024, 0);
+
+                if (count == 0 || count == NULL) {
+                    //Somebody disconnected , get his details and print
+                    getpeername(sd, (struct sockaddr *) &client_addr, \
+                        (socklen_t *) &len);
+                    printf("Host disconnected , ip %s , port %d \n",
+                           inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+                    //Close the socket and mark as 0 in list for reuse
+                    close(i);
+                    FD_CLR(i, &mainfds);
+                } else {
+                    printf("recieved %d byte(s): %s!\n", count, buffer);
+
+// ------------------------------------------- SET UP PORT FOR 2 PLAYERS -----------------------------------------------
+                    if (buffer[0] == '2') {
+                        int port = set_game_port2(two_players, i, ports);
+                        int tmp_port = port;
+                        if (port != 0) {
+                            char port_str0[10], port_str1[10];
+
+                            for (int i = 0; i < 10; i++) {
+                                port_str0[i] = 0;
+                                port_str1[i] = 0;
+                            }
+
+                            sprintf(port_str0, "%d", tmp_port);
+                            sprintf(port_str1, "%d", port);
+
+                            printf("this is port_str0: %s \n", port_str0);
+                            printf("this is port_str1: %s \n", port_str1);
+
+                            port_str0[4] = '0';
+                            printf("this is port_str0: %s \n", port_str0);
+                            port_str1[4] = '1';
+
+                            printf("this is port_str0: %s \n", port_str0);
+                            printf("this is port_str1: %s \n", port_str1);
+
+                            int port_len0 = strlen(port_str0);
+                            int port_len1 = strlen(port_str1);
+
+                            if (send(two_players[0], &port_str0, port_len0, 0) != port_len0) {
+                                printf("cant send port to the first player!\n");
+                            }
+
+                            if (send(two_players[1], &port_str1, port_len1, 0) != port_len1) {
+                                printf("cant send port to the second player!\n");
+                            }
+
+                            two_players[0] = 0;
+                            two_players[1] = 0;
+                        }
+
+// ------------------------------------------ SET UP PORT FOR 3 PLAYERS ------------------------------------------------
+                    }
+                    if (buffer[0] == '3') {
+                        int port = set_game_port3(three_players, i, ports);
+                        int tmp_port1 = port;
+                        int tmp_port2 = port;
+                        if (port != 0) {
+                            char port_str0[10], port_str1[10], port_str2[10];
+
+                            for (int i = 0; i < 10; i++) {
+                                port_str0[i] = 0;
+                                port_str1[i] = 0;
+                                port_str2[i] = 0;
+                            }
+
+                            sprintf(port_str0, "%d", tmp_port1);
+                            sprintf(port_str1, "%d", tmp_port2);
+                            sprintf(port_str2, "%d", port);
+
+                            printf("this is port_str0: %s \n", port_str0);
+                            printf("this is port_str1: %s \n", port_str1);
+                            printf("this is port_str2: %s \n", port_str2);
+
+                            port_str0[4] = '0';
+                            port_str1[4] = '1';
+                            port_str2[4] = '2';
+
+                            printf("this is port_str0: %s \n", port_str0);
+                            printf("this is port_str1: %s \n", port_str1);
+                            printf("this is port_str2: %s \n", port_str2);
+
+                            int port_len0 = strlen(port_str0);
+                            int port_len1 = strlen(port_str1);
+                            int port_len2 = strlen(port_str2);
+
+                            if (send(three_players[0], &port_str0, port_len0, 0) != port_len0) {
+                                printf("cant send port to the first player!\n");
+                            }
+
+                            if (send(three_players[1], &port_str1, port_len1, 0) != port_len1) {
+                                printf("cant send port to the second player!\n");
+                            }
+
+                            if (send(three_players[2], &port_str2, port_len2, 0) != port_len2) {
+                                printf("cant send port to the third player!\n");
+                            }
+
+                            three_players[0] = 0;
+                            three_players[1] = 0;
+                            three_players[2] = 0;
+                        }
+                    }
+
+// ---------------------------------------- SET UP PORT FOR 4 PLAYERS --------------------------------------------------
+                    if (buffer[0] == '4') {
+                        int port = set_game_port4(four_players, i, ports);
+                        int tmp_port1 = port;
+                        int tmp_port2 = port;
+                        int tmp_port3 = port;
+                        if (port != 0) {
+                            char port_str0[10], port_str1[10], port_str2[10], port_str3[10];
+
+                            for (int i = 0; i < 10; i++) {
+                                port_str0[i] = 0;
+                                port_str1[i] = 0;
+                                port_str2[i] = 0;
+                                port_str3[i] = 0;
+                            }
+
+                            sprintf(port_str0, "%d", tmp_port1);
+                            sprintf(port_str1, "%d", tmp_port2);
+                            sprintf(port_str2, "%d", tmp_port3);
+                            sprintf(port_str3, "%d", port);
+
+                            printf("this is port_str0: %s \n", port_str0);
+                            printf("this is port_str1: %s \n", port_str1);
+                            printf("this is port_str2: %s \n", port_str2);
+                            printf("this is port_str3: %s \n", port_str3);
+
+                            port_str0[4] = '0';
+                            port_str1[4] = '1';
+                            port_str2[4] = '2';
+                            port_str3[4] = '3';
+
+                            printf("this is port_str0: %s \n", port_str0);
+                            printf("this is port_str1: %s \n", port_str1);
+                            printf("this is port_str2: %s \n", port_str2);
+                            printf("this is port_str3: %s \n", port_str3);
+
+                            int port_len0 = strlen(port_str0);
+                            int port_len1 = strlen(port_str1);
+                            int port_len2 = strlen(port_str2);
+                            int port_len3 = strlen(port_str3);
+
+                            if (send(four_players[0], &port_str0, port_len0, 0) != port_len0) {
+                                printf("cant send port to the first player!\n");
+                            }
+
+                            if (send(four_players[1], &port_str1, port_len1, 0) != port_len1) {
+                                printf("cant send port to the second player!\n");
+                            }
+
+                            if (send(four_players[2], &port_str2, port_len2, 0) != port_len2) {
+                                printf("cant send port to the third player!\n");
+                            }
+
+                            if (send(four_players[3], &port_str3, port_len3, 0) != port_len3) {
+                                printf("cant send port to the fourth player!\n");
+                            }
+
+                            four_players[0] = 0;
+                            four_players[1] = 0;
+                            four_players[2] = 0;
+                            four_players[3] = 0;
+                        }
+
+                    }
+
+                }
+            }
+        }
+    }
+    return 0;
+}
