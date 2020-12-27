@@ -1,0 +1,384 @@
+#include <stdio.h>      /* for printf() and fprintf() */
+#include <stdbool.h> // for using boolean variables
+#include <sys/socket.h> /* for socket() and bind() */
+#include <arpa/inet.h>  /* for sockaddr_in */
+#include <stdlib.h>     /* for atoi() and exit() */
+#include <string.h>     /* for memset() */
+#include <unistd.h>     /* for close() */
+#include <signal.h>
+
+#define MAXRECVSTRING 255  /* Longest string to receive */
+//#define PORT 8080
+#define ADDR "127.0.0.1"
+
+// -------------------------------------------------  game functions  --------------------------------------------------
+
+#define min(a, b) \
+   ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a < _b ? _a : _b; })
+
+volatile sig_atomic_t flag = false;
+
+void my_alarm(int sig) {}
+
+int
+catch_signal(int sig, void (*handler)(int)) { // when a signal comes in, "catch" it and "handle it" in the way you want
+    struct sigaction action;  // create a new sigaction
+    action.sa_handler = handler;  // set it's sa_handler attribute to the function specified in the header
+    sigemptyset(&action.sa_mask);  // "turn all the signals in the sa_mask off?" "set the sa_mask to contian no signals,
+    // i.e. nothing is masked?"
+    action.sa_flags = 0; // not sure, looks like we aren't using any of the available flags, whatever they may be
+    return sigaction(sig, &action, NULL);  // here is where you actually reassign- now when sig is received, it'll
+    // do what action tells it
+}
+
+bool isFinished(size_t n, int square[n - 1][n - 1]) {
+    for (int i = 0; i < n - 1; ++i) {
+        for (int j = 0; j < n - 1; ++j) {
+            if (square[i][j] != 4) { return false; }
+        }
+    }
+    return true;
+};
+
+void printSquares(int n, int square[n - 1][n - 1]) {
+    for (int i = 0; i < n - 1; ++i) {
+        for (int j = 0; j < n - 1; ++j) {
+            printf("%d ", square[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+void printMap(int n, int line[n][n - 1][2]) {
+    // print first n-1 rows of horizontal lines and all rows of vertical lines
+    for (int i = 0; i < n - 1; ++i) {
+        // horizontal row
+        for (int j = 0; j < n - 1; ++j) {
+            printf("+ ");
+            if (line[i][j][0] == 1) {
+                printf("- ");
+            } else {
+                printf("  ");
+            }
+        }
+        printf("+ \n");
+
+        // vertical row
+        for (int j = 0; j < n; ++j) {
+            if (line[j][i][1] == 1) {
+                printf("| ");
+            } else {
+                printf("  ");
+            }
+            printf("  ");
+        }
+        printf("\n");
+    }
+
+    // print last row of horizontal lines
+    for (int j = 0; j < n - 1; ++j) {
+        printf("+ ");
+        if (line[n - 1][j][0] == 1) {
+            printf("- ");
+        } else {
+            printf("  ");
+        }
+    }
+    printf("+\n");
+}
+
+void printScores(int n, int player[n - 1]) {
+    printf("players scores: ");
+    for (int i = 0; i < n - 1; ++i) {
+        printf("%d ", player[i]);
+    }
+    printf("\n");
+}
+
+bool isVertical(char data[6]) {
+    if (data[1] == data[3]) { return true; }
+    return false;
+}
+
+
+void consume(int n, char data[6], int line[n][n - 1][2], int square[n - 1][n - 1], int player[n - 1]) {
+    if (!isVertical(data)) {
+        line[(int) data[0] - '0'][min((int) data[1] - '0', (int) data[3] - '0')][0] = 1;
+    } else {
+        line[(int) data[1] - '0'][min((int) data[0] - '0', (int) data[2] - '0')][1] = 1;
+    }
+
+    // then, we change the values in square[][]
+    if (isVertical(data)) { // two/one horizontal square(s)
+        int row = (int) data[0] - '0';
+        if ((int) data[1] - '0' >= 0 && (int) data[1] - '0' < n - 1) {
+            square[row][(int) data[1] - '0']++;
+            if (square[row][(int) data[1] - '0'] == 4) {
+                player[(int) data[4] - '0']++;
+            }
+        }
+        if ((int) data[1] - '1' >= 0 && (int) data[1] - '1' < n - 1) {
+            square[row][(int) data[1] - '1']++;
+            if (square[row][(int) data[1] - '1'] == 4) {
+                player[(int) data[4] - '0']++;
+            }
+        }
+
+    } else { // two/one vertical square(s)
+        int column = (int) data[1] - '0';
+        if ((int) data[0] - '0' >= 0 && (int) data[0] - '0' < n - 1) {
+            square[(int) data[0] - '0'][column]++;
+            if (square[(int) data[0] - '0'][column] == 4) {
+                player[(int) data[4] - '0']++;
+            }
+
+        }
+        if ((int) data[0] - '1' >= 0 && (int) data[0] - '1' < n - 1) {
+            square[(int) data[0] - '1'][column]++;
+            if (square[(int) data[0] - '1'][column] == 4) {
+                player[(int) data[4] - '0']++;
+            }
+        }
+    }
+}
+
+int announceWinner(int n, int *player) {
+    int max_index = 0;
+    for (int i = 1; i < n - 1; ++i) {
+        if (player[i] = player[max_index]) {
+            return -1; // meaning that there is no announceWinner
+        } else {
+            if (player[i] > player[max_index]) {
+                max_index = i;
+            }
+        }
+    }
+    printf("the winner is: %d\n", max_index);
+    return max_index;
+}
+
+// --------------------------------------------- end of game functions  ------------------------------------------------
+
+void DieWithError(char *errorMessage) {
+    perror(errorMessage);
+};  /* External error handling function */
+
+int main(int argc, char *argv[]) {
+
+    int PORT = atoi(argv[1]);
+    int legal_time = 20;
+    printf("welcome to the Boxes & Dots game!\n You're ganna connect to the servers in a moment.\n");
+
+    char recv_buffer[1025];
+    char send_buffer[1025];
+    bzero(recv_buffer, 1025);
+    bzero(send_buffer, 1025);
+    char player_num;
+    int count;
+    int nobat;
+    int game_port;
+
+    //SOCKET CREATION
+    int main_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (main_sock == -1) {
+        printf("Socket creation failed...\n");
+        exit(0);
+    } else
+        printf("Socket successfully created..\n");
+
+    struct sockaddr_in server_addr;
+    bzero(&server_addr, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr(ADDR);
+    server_addr.sin_port = htons(PORT);
+
+    //CONNECT TO SERVER
+    if (connect(main_sock, &server_addr, sizeof(server_addr)) != 0) {
+        printf("Connection with the server failed...\n");
+        exit(0);
+    } else
+        printf("Connected to the server..\n");
+
+    //TO RECEIVE A WELCOME FROM SERVER
+    count = recv(main_sock, recv_buffer, 1024, 0);
+    if (count == 0) {
+        printf("nothing recieved!\n");
+    } else {
+        printf("%s", recv_buffer);
+    }
+
+    printf("How many players should play on your game(including yourself)? 2, 3 or 4?\n ");
+    player_num = getchar();
+    send_buffer[0] = player_num;
+
+    int send_int = send(main_sock, send_buffer, 1, 0);
+    if (send_int == -1) {
+        printf("player number sending failed!\n");
+    } else {
+        printf("player numbers sent in %d bytes!\n", send_int);
+    }
+    printf("Waiting for matched player and game port...\n");
+
+    while (1) {
+        bzero(recv_buffer, strlen(recv_buffer));
+        count = 0;
+        count = recv(main_sock, recv_buffer, 1024, 0);
+
+        if (count == 0 || recv_buffer == NULL) {
+            printf("port not recieved yet!\n");
+            continue;
+        } else {
+            printf("len: %d and port: %s \n", count, recv_buffer);
+            break;
+        }
+    }
+    int integer = atoi(recv_buffer);
+    printf("%d \n", integer);
+    nobat = integer % 10;
+    game_port = integer / 10;
+    printf("Your game port is %d and you play the %dth. \n", game_port, nobat);
+
+
+    //------------------------------------------- Broadcast Setting ----------------------------------------------------
+    int sock;                         /* Socket */
+    struct sockaddr_in broadcastAddr; /* Broadcast address */
+    char *broadcastIP;                /* IP broadcast address */
+    unsigned short broadcastPort;     /* Server port */
+    char sendingData[10];                    /* Sending sendingData*/
+    int broadcastPermission;          /* Socket opt to set permission to broadcast */
+    unsigned int sendStringLen;       /* Length of string to broadcast */
+
+    char recvString[MAXRECVSTRING + 1]; /* Buffer for received string */
+    int recvStringLen;                /* Length of received string */
+
+    broadcastIP = "255.255.255.255";            /* First arg:  broadcast IP address */
+    broadcastPort = game_port;    // TCP
+
+    /* Create socket for sending/receiving datagrams */
+    if ((sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
+        DieWithError("socket() failed");
+
+    /* Set socket to allow broadcast */
+    broadcastPermission = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_BROADCAST, (void *) &broadcastPermission,
+                   sizeof(broadcastPermission)) < 0)
+        DieWithError("setsockopt() failed");
+
+    /* Construct local address structure */
+    memset(&broadcastAddr, 0, sizeof(broadcastAddr));   /* Zero out structure */
+    broadcastAddr.sin_family = AF_INET;                 /* Internet address family */
+    broadcastAddr.sin_addr.s_addr = inet_addr(broadcastIP);/* Broadcast IP address */
+    broadcastAddr.sin_port = htons(broadcastPort);         /* Broadcast port */
+
+    int yes = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes) == -1) {
+        perror("setsockopt");
+        exit(1);
+    }
+
+    /* Bind to the broadcast port */
+    if (bind(sock, (struct sockaddr *) &broadcastAddr, sizeof(broadcastAddr)) < 0)
+        DieWithError("bind() failed");
+
+
+    // --------------------------- set up game, assumed that people and port is given ----------------------------------
+    int people = (int) player_num - '0';
+    printf("people is: %d\n", people);
+    int game_turn = nobat; // AZ TCP BE DAST MIAAD
+    printf("nobat is: %d \n", nobat);
+
+    int player[people]; //array to store each players point
+    int n = people + 1;
+    int square[n - 1][n - 1]; // squares in our grid
+    int line[n][n - 1][2]; // lines
+    printf("the size is: %d\n", n);
+
+    // initiating the arrays with zeros
+    for (int i = 0; i < n - 1; ++i) {
+        player[i] = 0;
+    }
+    for (int i = 0; i < n - 1; ++i) {
+        for (int j = 0; j < n - 1; ++j) {
+            square[i][j] = 0;
+        }
+    }
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n - 1; ++j) {
+            for (int k = 0; k < 2; ++k) {
+                line[i][j][k] = 0;
+            }
+        }
+    }
+
+    // ---------------------------------- setting up is done. ready for playing ----------------------------------------
+    printf("sar e for e avval\n");
+    //     be andaze ye turn avval e avval bayad receive kone qabl az inke avvalin send esh ro bokone
+    for (int i = 0; i < game_turn; ++i) {
+        printf("nobatet nist, vaysa!(age vaynasi baazi xaraab mishe :(( )\n");
+        if ((recvStringLen = recvfrom(sock, recvString, MAXRECVSTRING, 0, NULL, 0)) < 0) {
+            DieWithError("recvfrom() failed");
+        }
+        recvString[recvStringLen] = '\0';
+        printf("Received: %s\n", recvString);    /* Print the received string */
+
+        // game jaat
+        consume(n, recvString, line, square, player);
+        printMap(n, line);
+        printScores(n, player);
+    }
+
+    int turn = 0;
+    // setting up sigALRM
+    if (catch_signal(SIGALRM, my_alarm) == -1) {
+        fprintf(stderr, "Can't map the SIGALRM handler\n");
+        return 0;
+    }
+    while (!isFinished(n, square)) {
+        if (turn % people == 0) {
+            strcpy(sendingData, "akbar");
+            write(1, "it's your turn, do your broadcast: ", 40);
+            alarm(legal_time);
+
+            read(0, sendingData, 6);
+            sendingData[4] = '0' + nobat;
+            alarm(0);
+            sendStringLen = strlen(sendingData);  /* Find length of sendString */
+
+
+            /* Broadcast sendString in datagram to clients*/
+            if (sendto(sock, sendingData, sendStringLen, 0, (struct sockaddr *)
+                    &broadcastAddr, sizeof(broadcastAddr)) != sendStringLen)
+                DieWithError("sendto() sent a different number of bytes than expected\n");
+            printf("dige sabr kon! \n");
+        } else {
+            printf("nobatet nist, vaysa!(age vaynasi baazi xaraab mishe :(( )\n");
+        }
+
+        if ((recvStringLen = recvfrom(sock, recvString, MAXRECVSTRING, 0, NULL, 0)) < 0) {
+            DieWithError("recvfrom() failed");
+        }
+        recvString[recvStringLen] = '\0';
+        printf("Received: %s\n", recvString);    /* Print the received string */
+
+        // game jaat
+        if (recvString[0] != 'a') { // agar neshaani az akbar nadasht
+            consume(n, recvString, line, square, player);
+        } else {
+            printf("YEKI JAA MOONDDD\n");
+            printf("YEKI JAA MOONDDD!\n");
+            printf("YEKI JAA MOONDDD!!\n");
+            printf("MAP AVAZ NASHOD\n");
+        }
+        printMap(n, line);
+        printScores(n, player);
+        turn++;
+
+    }
+    int winner_player = announceWinner(n, player);
+    printf("winner is: %d\n", winner_player);
+
+    close(sock);
+    exit(0);
+}
